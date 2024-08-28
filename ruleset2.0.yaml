@@ -1,0 +1,67 @@
+modelVersion: 2.0
+
+description: "cENM: CN CI Pipeline Common Ruleset"
+
+import:
+  imported-ruleset: eric-enm-common-ruleset.yaml
+
+docker:
+  registry: https://armdocker.rnd.ericsson.se/proj-enm
+
+docker-images:
+  - adp-helm-dr-check: armdocker.rnd.ericsson.se/proj-adp-cicd-drop/common-library-adp-helm-dr-check:${adp-helm-dr-check-tag}
+  - adp-release-auto: armdocker.rnd.ericsson.se/proj-adp-cicd-drop/bob-adp-release-auto:${adp-release-auto-tag}
+
+properties:
+  - common-ruleset-name: eric-enm-common-ruleset
+  - adp-helm-dr-check-tag: "latest"
+  - adp-release-auto-tag: "4.7.2"
+
+env:
+  - RELEASE (default=true)
+  - CENMBUILD_ACCESS_TOKEN
+  - BUILD_DATE (default = $(date +%d%m%Y-%H%M%S --utc))
+  - ARM_SERVER_FQDN (default=arm.seli.gic.ericsson.se)
+  - ARM_USER (default=lciadm100)
+  - ARM_COMMON_RULESET_REPO (default=proj-eric-oss-dev-generic)
+
+var:
+  - commit-hash
+  - version
+  - version-prefix
+
+rules:
+  generate-new-version: 
+    - rule: imported-ruleset.generate-new-version
+      properties:
+        - adp-release-auto-tag: ${adp-release-auto-tag}
+
+  create-git-tag: 
+    - rule: imported-ruleset.create-git-tag
+      properties:
+        - adp-release-auto-tag: ${adp-release-auto-tag}
+
+  remove-git-tag: 
+    - rule: imported-ruleset.remove-git-tag
+      properties:
+        - adp-release-auto-tag: ${adp-release-auto-tag}
+
+  publish:
+    - task: add-version-to-common-ruleset
+      docker-image: adp-release-auto
+      cmd:
+        # Replace BOB_VERSION_AUTO_UPDATED_HERE with ${var.version}
+        - sed -i "s/BOB_VERSION_AUTO_UPDATED_HERE/${var.version}/" ${common-ruleset-name}.yaml
+    - task: publish-common-ruleset-to-generic-arm-repo
+      docker-image: adp-release-auto
+      cmd:
+        # Publish common ruleset with SemVer and latest versions to generic Artifactory repo
+        - curl -u ${env.ARM_USER}:${env.CENMBUILD_ACCESS_TOKEN} -X PUT -T ${common-ruleset-name}.yaml https://${env.ARM_SERVER_FQDN}/artifactory/${env.ARM_COMMON_RULESET_REPO}-local/eric-enm/${common-ruleset-name}-ci/${common-ruleset-name}-${var.version}.yaml
+        - curl -u ${env.ARM_USER}:${env.CENMBUILD_ACCESS_TOKEN} -X PUT -T ${common-ruleset-name}.yaml https://${env.ARM_SERVER_FQDN}/artifactory/${env.ARM_COMMON_RULESET_REPO}-local/eric-enm/${common-ruleset-name}-ci/${common-ruleset-name}-latest.yaml
+    - task: verify-common-ruleset-is-available
+      docker-image: adp-release-auto
+      cmd:
+        - curl -u ${env.ARM_USER}:${env.CENMBUILD_ACCESS_TOKEN} https://${env.ARM_SERVER_FQDN}/artifactory/${env.ARM_COMMON_RULESET_REPO}-local/eric-enm/${common-ruleset-name}-ci/${common-ruleset-name}-${var.version}.yaml --output downloaded_${common-ruleset-name}-${var.version}.yaml
+        - cat downloaded_${common-ruleset-name}-${var.version}.yaml | grep 'version:' | head -n1 | awk '{print $2}'
+        - cat downloaded_${common-ruleset-name}-${var.version}.yaml
+    # Add tasks to publish docker image here...
